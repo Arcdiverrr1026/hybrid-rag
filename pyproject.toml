@@ -1,0 +1,29 @@
+[project]
+name = "hybrid-rag"
+version = "0.1.0"
+description = "Domain-neutral Markdown, FAISS, BM25, and RRF retrieval package"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-huggingface==0.3.1",
+    "langchain-text-splitters==0.3.8",
+    "langchain-community==0.3.27",
+    "faiss-cpu>=1.7.0",
+    "sentence-transformers>=3.0.0",
+    "rank_bm25==0.2.2",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hybrid_rag*", "rag_modules*"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
