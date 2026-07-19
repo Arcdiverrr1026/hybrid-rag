@@ -11,7 +11,11 @@ class DeterministicEmbeddings(Embeddings):
 
     dimensions = 16
 
+    def __init__(self) -> None:
+        self.document_texts: list[str] = []
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.document_texts.extend(texts)
         return [self._embed(text) for text in texts]
 
     def embed_query(self, text: str) -> list[float]:
@@ -25,4 +29,3 @@ class DeterministicEmbeddings(Embeddings):
 @pytest.fixture
 def embeddings() -> DeterministicEmbeddings:
     return DeterministicEmbeddings()
-
