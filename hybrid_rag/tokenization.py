@@ -59,7 +59,10 @@ class JiebaBM25Tokenizer:
             path = Path(user_dict).expanduser()
             if not path.is_file():
                 raise FileNotFoundError(f"Jieba user dictionary not found: {path}")
-            self._jieba.load_userdict(str(path))
+            # Jieba 0.42.1 传入路径时不会主动关闭内部打开的文件，因此由组件
+            # 显式管理文件句柄，避免长生命周期服务反复 reload 时泄漏描述符。
+            with path.open("rb") as user_dictionary:
+                self._jieba.load_userdict(user_dictionary)
 
         for term in _normalized_domain_terms(domain_terms):
             self._jieba.add_word(term)

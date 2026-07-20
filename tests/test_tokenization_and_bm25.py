@@ -1,4 +1,6 @@
+import gc
 import sys
+import warnings
 
 import pytest
 
@@ -46,12 +48,30 @@ def test_bm25_retrieves_chinese_terms_and_applies_filters():
     assert all(chunk.metadata["category"] == "support" for chunk, _ in results)
 
 
-def test_ngram_remains_the_default_and_factory_preserves_exact_output():
-    """默认配置必须继续使用旧 tokenizer，作为效果基线和一键回滚路径。"""
-    text = "客户端 v2.4.1 出现 111/500002 错误并频繁掉线"
-
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "客户端出现 111/500002 错误并频繁掉线",
+            [
+                "客", "户", "端", "出", "现", "客户", "户端", "端出", "出现",
+                "111/500002",
+                "错", "误", "并", "频", "繁", "掉", "线",
+                "错误", "误并", "并频", "频繁", "繁掉", "掉线",
+            ],
+        ),
+        ("DNF v2.4.1 111/500002", ["dnf", "v2.4.1", "111/500002"]),
+        ("节点-切换", ["节", "点", "节点", "切", "换", "切换"]),
+        ("", []),
+        ("掉线掉线", ["掉", "线", "掉", "线", "掉线", "线掉", "掉线"]),
+        ("WiFi6网络", ["wifi6", "网", "络", "网络"]),
+    ],
+)
+def test_ngram_remains_the_default_with_frozen_legacy_output(text, expected):
+    """冻结旧版完整输出，避免工厂和实现同时变化时测试仍然通过。"""
     assert RetrievalConfig().bm25_tokenizer == "ngram"
-    assert create_bm25_tokenizer()(text) == tokenize_zh(text)
+    assert tokenize_zh(text) == expected
+    assert create_bm25_tokenizer()(text) == expected
 
 
 def test_jieba_uses_isolated_domain_terms_and_preserves_protected_tokens():
@@ -71,7 +91,10 @@ def test_jieba_loads_user_dictionary(tmp_path):
     user_dict = tmp_path / "customer-service-terms.txt"
     user_dict.write_text("霜火加速协议 100000 n\n", encoding="utf-8")
 
-    tokenizer = create_bm25_tokenizer("jieba", user_dict=user_dict)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ResourceWarning)
+        tokenizer = create_bm25_tokenizer("jieba", user_dict=user_dict)
+        gc.collect()
 
     assert "霜火加速协议" in tokenizer("请检查霜火加速协议是否开启")
 
