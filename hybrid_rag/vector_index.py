@@ -1,4 +1,4 @@
-"""FAISS adapter isolated from chunking and service orchestration."""
+"""FAISS 向量索引适配层，把向量检索与分块、服务编排逻辑隔离。"""
 
 from __future__ import annotations
 
@@ -11,11 +11,14 @@ from langchain_core.embeddings import Embeddings
 from .schemas import KnowledgeChunk, RetrievalConfig
 
 
+# 内部状态与用户元数据分开存储，避免用户恰好使用同名字段时互相覆盖。
 _INTERNAL_STATE_KEY = "__hybrid_rag_internal__"
 _USER_METADATA_KEY = "__hybrid_rag_user_metadata__"
 
 
 class VectorIndex:
+    """负责构建、持久化、加载和查询 FAISS 索引。"""
+
     def __init__(self, embeddings: Embeddings):
         self.embeddings = embeddings
         self.store: FAISS | None = None
@@ -26,9 +29,9 @@ class VectorIndex:
         config: RetrievalConfig,
         embeddings: Embeddings | None = None,
     ) -> "VectorIndex":
+        """根据配置创建向量索引，也允许测试或业务方注入 Embedding 实现。"""
         if embeddings is None:
-            # Keep model runtimes lazy: callers can inject an API embedding or a
-            # test double without importing PyTorch/Sentence Transformers.
+            # 延迟导入模型运行时：传入 API Embedding 或测试替身时无需加载 PyTorch。
             from langchain_huggingface import HuggingFaceEmbeddings
 
             embeddings = HuggingFaceEmbeddings(
@@ -39,6 +42,7 @@ class VectorIndex:
         return cls(embeddings)
 
     def build(self, chunks: list[KnowledgeChunk]) -> None:
+        """把所有分块转换为 LangChain Document 并建立内存中的 FAISS 索引。"""
         if not chunks:
             raise ValueError("cannot build a vector index without chunks")
         self.store = FAISS.from_documents(
@@ -47,13 +51,15 @@ class VectorIndex:
         )
 
     def save(self, path: str | Path) -> None:
+        """将内存中的 FAISS 索引保存到指定目录。"""
         if self.store is None:
             raise RuntimeError("vector index has not been built")
         self.store.save_local(str(path))
 
     def load(self, path: str | Path) -> None:
-        # The pickle sidecar is trusted only because this package creates and owns
-        # the index directory. Never point this method at a user-uploaded index.
+        """加载本组件自己生成的 FAISS 索引。"""
+        # FAISS 的 sidecar 使用 pickle。这里仅信任本组件管理的索引目录，
+        # 绝不能把用户上传的未知索引路径直接传入此方法。
         self.store = FAISS.load_local(
             str(path),
             self.embeddings,
@@ -66,11 +72,13 @@ class VectorIndex:
         limit: int,
         filters: dict[str, object] | None = None,
     ) -> list[tuple[KnowledgeChunk, float]]:
+        """返回与查询最相似的分块，以及 FAISS 给出的原始距离分数。"""
         if self.store is None:
             raise RuntimeError("vector index is not loaded")
         index_size = int(self.store.index.ntotal)
         if index_size == 0:
             return []
+        # k 和 fetch_k 不能超过实际索引大小，小数据集尤其需要这层保护。
         safe_limit = min(limit, index_size)
         pairs = self.store.similarity_search_with_score(
             query,
@@ -82,10 +90,11 @@ class VectorIndex:
 
 
 def _to_langchain_document(chunk: KnowledgeChunk) -> Document:
+    """把项目内部的 KnowledgeChunk 转换为 LangChain Document。"""
     user_metadata = dict(chunk.metadata)
     metadata = dict(user_metadata)
-    # Keep searchable user metadata at the top level for FAISS filters while
-    # preserving an untouched copy in case a user key collides with ours.
+    # 用户元数据保留在顶层供 FAISS 过滤，同时保存一份原样副本，
+    # 防止用户字段名与组件内部字段名冲突。
     metadata[_USER_METADATA_KEY] = user_metadata
     metadata[_INTERNAL_STATE_KEY] = {
         "chunk_id": chunk.id,
@@ -102,10 +111,11 @@ def _to_langchain_document(chunk: KnowledgeChunk) -> Document:
 
 
 def _from_langchain_document(document: Document) -> KnowledgeChunk:
+    """把向量检索结果还原为业务侧使用的 KnowledgeChunk。"""
     metadata = dict(document.metadata)
     internal = metadata.pop(_INTERNAL_STATE_KEY, None)
     if internal is None:
-        # Read indexes produced before enriched vector text was introduced.
+        # 兼容引入“增强向量文本”之前生成的旧索引格式。
         internal = {
             "chunk_id": metadata.pop("chunk_id"),
             "document_id": metadata.pop("document_id"),
@@ -129,6 +139,8 @@ def _from_langchain_document(document: Document) -> KnowledgeChunk:
 
 
 def _build_vector_text(chunk: KnowledgeChunk) -> str:
+    """组合标题、标题路径、标签和正文，作为 Embedding 模型的输入文本。"""
+    # 标题和标签通常包含高密度关键词，加入向量文本有助于召回短查询。
     parts = [chunk.title.strip()]
     parts.extend(heading.strip() for heading in chunk.heading_path if heading.strip())
 

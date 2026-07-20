@@ -1,7 +1,13 @@
-from hybrid_rag import HybridRetrievalService, KnowledgeDocument, RetrievalConfig
+from hybrid_rag import (
+    HybridRetrievalService,
+    KnowledgeDocument,
+    RetrievalConfig,
+    tokenize_zh,
+)
 
 
 def _documents() -> list[KnowledgeDocument]:
+    """构造两篇固定的测试文档，供服务层测试重复使用。"""
     return [
         KnowledgeDocument(
             id="disconnect",
@@ -19,6 +25,7 @@ def _documents() -> list[KnowledgeDocument]:
 
 
 def test_build_load_search_and_staleness(tmp_path, embeddings):
+    """覆盖建索引、重新加载、查询、过滤和过期检测这条完整主流程。"""
     config = RetrievalConfig(
         index_path=str(tmp_path / "index"),
         final_top_k=2,
@@ -45,6 +52,7 @@ def test_build_load_search_and_staleness(tmp_path, embeddings):
 
 
 def test_hybrid_falls_back_to_bm25_when_vector_search_fails(tmp_path, embeddings, monkeypatch):
+    """验证混合模式在向量检索故障时仍可降级使用 BM25。"""
     config = RetrievalConfig(index_path=str(tmp_path / "index"))
     service = HybridRetrievalService(config, embeddings)
     service.build(_documents())
@@ -61,7 +69,9 @@ def test_hybrid_falls_back_to_bm25_when_vector_search_fails(tmp_path, embeddings
 
 
 def test_vector_text_uses_title_and_tags_but_returns_raw_content(tmp_path, embeddings):
+    """验证向量文本包含增强信息，但最终结果仍返回原始正文和用户元数据。"""
     raw_content = "请切换节点后重新连接。"
+    # 特意加入与内部字段同名的数据，用来验证用户元数据不会被覆盖。
     user_metadata = {
         "category": "support",
         "tags": ["DNF手游韩服", "111/500002"],
@@ -104,3 +114,46 @@ def test_vector_text_uses_title_and_tags_but_returns_raw_content(tmp_path, embed
     result = next(item for item in results if item.document_id == "headingless")
     assert result.content == raw_content
     assert result.metadata == user_metadata
+
+
+def test_service_uses_configured_bm25_tokenizer_for_build_query_and_load(
+    tmp_path, embeddings
+):
+    """BM25 建库、查询和重载必须共享完全相同的 tokenizer 配置。"""
+    config = RetrievalConfig(
+        index_path=str(tmp_path / "index"),
+        bm25_tokenizer="hybrid",
+        jieba_domain_terms=("灵缇星链协议",),
+    )
+    service = HybridRetrievalService(config, embeddings)
+    service.build(_documents())
+
+    assert service.status()["bm25_tokenizer"] == "hybrid"
+    assert "灵缇星链协议" in service.bm25_index.tokenizer("灵缇星链协议")
+    assert service.search("频繁掉线", mode="bm25")
+
+    reloaded = HybridRetrievalService(config, embeddings)
+    reloaded.load()
+
+    assert reloaded.bm25_index is not None
+    assert reloaded.bm25_index.tokenizer is reloaded.bm25_tokenizer
+    assert "灵缇星链协议" in reloaded.bm25_index.tokenizer("灵缇星链协议")
+    assert reloaded.search("频繁掉线", mode="bm25")
+
+
+def test_service_keeps_custom_bm25_tokenizer_injection_compatible(tmp_path, embeddings):
+    calls: list[str] = []
+
+    def recording_tokenizer(text: str) -> list[str]:
+        calls.append(text)
+        return tokenize_zh(text)
+
+    config = RetrievalConfig(index_path=str(tmp_path / "index"))
+    service = HybridRetrievalService(config, embeddings, recording_tokenizer)
+    service.build(_documents())
+    calls.clear()
+
+    service.search("频繁掉线", mode="bm25")
+
+    assert calls == ["频繁掉线"]
+    assert service.status()["bm25_tokenizer"] == "custom"

@@ -2,6 +2,7 @@ from hybrid_rag import KnowledgeDocument, MarkdownChunker, RetrievalConfig
 
 
 def test_chunk_ids_are_stable_and_oversized_sections_are_split():
+    """验证超长章节会被切分，且相同输入每次生成相同的分块 ID。"""
     document = KnowledgeDocument(
         id="doc-1",
         title="测试文档",
@@ -23,6 +24,7 @@ def test_chunk_ids_are_stable_and_oversized_sections_are_split():
 
 
 def test_headingless_short_markdown_stays_in_one_chunk():
+    """验证没有 Markdown 标题的短文本仍能正常保留为单个分块。"""
     content = "客户端无法连接时，请先切换加速节点，然后重新启动客户端。"
     document = KnowledgeDocument(id="short", title="连接问题", content=content)
     chunker = MarkdownChunker(
@@ -37,6 +39,7 @@ def test_headingless_short_markdown_stays_in_one_chunk():
 
 
 def test_headingless_long_markdown_uses_length_split_and_overlap():
+    """验证无标题长文本按长度切分，并在相邻分块间保留重叠内容。"""
     content = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" * 10
     document = KnowledgeDocument(id="long", title="连续文本", content=content)
     chunker = MarkdownChunker(

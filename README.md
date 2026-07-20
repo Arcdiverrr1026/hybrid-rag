@@ -5,7 +5,7 @@
 - Markdown 标题感知分片
 - 超长章节二次分片与 overlap
 - 稳定的 document/chunk ID
-- 中文 BM25
+- 中文 BM25（`ngram`、`jieba`、`hybrid` 三种分词模式）
 - FAISS 向量检索
 - Reciprocal Rank Fusion（RRF）
 - 元数据过滤
@@ -64,6 +64,36 @@ for result in results:
 数据库接入时，只需把数据库记录转换成 `KnowledgeDocument`。检索包不会要求
 数据库模型或 Web 框架遵循特定实现。
 
+## 中文 BM25 分词
+
+Markdown 分片与 BM25 分词是两个独立阶段：前者根据标题和长度确定召回片段，
+后者只把每个片段的 `title + heading_path + tags + content` 转换为 BM25 token。
+因此切换 BM25 tokenizer 不会改变 chunk ID，也不需要重新生成 FAISS 向量；服务
+每次 `build()` 或 `load()` 都会用当前配置从 `chunks.json` 重建内存中的 BM25。
+
+默认 `ngram` 完全保留原行为，适合零配置和随时回滚：
+
+```python
+RetrievalConfig(bm25_tokenizer="ngram")
+```
+
+`jieba` 使用独立的 Jieba 搜索分词实例，`hybrid` 则额外加入中文双字 fallback，
+在词典未收录新品名或口语写法时仍能匹配局部字符。三种模式都会把英文、数字、
+版本号和 `111/500002` 一类错误码保留为完整 token。客服场景建议先在 compare
+评测中使用 `hybrid`，确认效果后再切换默认值：
+
+```python
+config = RetrievalConfig(
+    bm25_tokenizer="hybrid",
+    jieba_user_dict="./config/customer-service-terms.txt",
+    jieba_domain_terms=("灵缇加速器", "节点切换"),
+)
+```
+
+用户词典采用 Jieba 原生格式，每行可写 `词语 词频 词性`。运行时领域词适合少量
+配置；较大的词表应使用受版本控制的用户词典。不要把所有完整文档标题自动加入
+词典，否则容易让过长标题成为不可拆分 token，并放大标题关键词偏置。
+
 ## Markdown 目录示例
 
 使用现有 `data/` 目录构建或加载索引：
@@ -71,6 +101,10 @@ for result in results:
 ```bash
 uv run python main.py --data ./data --rebuild
 uv run python main.py --data ./data --query "示例问题" --top-k 5
+uv run python main.py --data ./data --query "频繁掉线" \
+  --bm25-tokenizer hybrid \
+  --jieba-user-dict ./config/customer-service-terms.txt \
+  --jieba-domain-term 灵缇加速器
 ```
 
 命令行只是演示入口。Web 服务应长期持有一个已加载的
