@@ -79,14 +79,13 @@ RetrievalConfig(bm25_tokenizer="ngram")
 
 `jieba` 使用独立的 Jieba 搜索分词实例，`hybrid` 则额外加入中文双字 fallback，
 在词典未收录新品名或口语写法时仍能匹配局部字符。三种模式都会把英文、数字、
-版本号和 `111/500002` 一类错误码保留为完整 token。客服场景建议先在 compare
-评测中使用 `hybrid`，确认效果后再切换默认值：
+版本号和 `111/500002` 一类错误码保留为完整 token。可先离线比较不同分词模式，确认效果后再切换默认值：
 
 ```python
 config = RetrievalConfig(
     bm25_tokenizer="hybrid",
     jieba_user_dict="./config/customer-service-terms.txt",
-    jieba_domain_terms=("灵缇加速器", "节点切换"),
+    jieba_domain_terms=("网络服务", "节点切换"),
 )
 ```
 
@@ -96,7 +95,7 @@ config = RetrievalConfig(
 
 ## Markdown 目录示例
 
-使用现有 `data/` 目录构建或加载索引：
+准备包含 Markdown 文档的 `data/` 目录后，构建或加载索引：
 
 ```bash
 uv run python main.py --data ./data --rebuild
@@ -104,7 +103,7 @@ uv run python main.py --data ./data --query "示例问题" --top-k 5
 uv run python main.py --data ./data --query "频繁掉线" \
   --bm25-tokenizer hybrid \
   --jieba-user-dict ./config/customer-service-terms.txt \
-  --jieba-domain-term 灵缇加速器
+  --jieba-domain-term 网络服务
 ```
 
 命令行只是演示入口。Web 服务应长期持有一个已加载的
@@ -165,13 +164,8 @@ FAISS 的 LangChain 持久化格式包含 pickle sidecar。代码只允许加载
 uv run pytest
 ```
 
-## 接入客服系统
+## 业务集成
 
-建议公司项目保留三条检索路径：
+上游负责将数据库记录或文件转换为 `KnowledgeDocument`，再调用构建、加载和查询接口。模型生成、聊天记录、访问控制、Web 路由和业务评测由调用方实现。
 
-- `tfidf`：原实现，用于基线和回滚
-- `hybrid`：本组件的 FAISS + BM25 + RRF
-- `compare`：两者同时检索，但先由 TF-IDF 结果生成线上回答
-
-本仓库只提供 Hybrid 检索能力。模式路由、SSE 输出、聊天记录、Prompt 和 TF-IDF
-仍由客服系统负责。
+如需保留已有检索方案，可在业务层增加独立路由，用于对照评测与故障降级；本组件不包含 TF-IDF 后端或独立神经重排模型。
